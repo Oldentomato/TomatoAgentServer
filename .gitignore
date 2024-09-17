@@ -1,0 +1,12 @@
+.env
+*/model/
+/vectorStore
+docker-compose.yml
+*/passTable.py
+/db
+/nginx
+/letsencrypt
+/portainer_data
+/redisData
+/backupDB
+docker-compose-deploy.yml

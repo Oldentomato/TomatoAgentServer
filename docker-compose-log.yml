@@ -1,0 +1,25 @@
+version: "3"
+
+services:
+  loki:
+    image: grafana/loki:2.7.1
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - mynetwork
+
+  #promtail은 loki에 로그를 전송하는 역할을 한다.
+  # docker swarm의 각 노드에서 컨테이너 로그를 수집할 수 있다
+  promtail:
+    image: grafana/promtail:2.7.1
+    volumnes:
+      - /var/log:/var/log
+      - /var/lib/docker/containers:/var/lib/docker/containers
+      - ./promtail-config.yaml:/etc/promtail/config.yml
+
+    networks:
+      - mynetwork
+

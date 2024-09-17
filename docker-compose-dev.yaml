@@ -1,0 +1,45 @@
+version: "3"
+
+services:
+  mongo-express:
+    image: mongo-express:1.0.2-18
+    restart: always
+    container_name: mongodb_express
+    networks:
+      - internal
+    deploy:
+      replicas: 1
+    ports:
+      - 8082:8082
+    tty: true
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongodb
+      - ME_CONFIG_MONGODB_PORT=27017
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=mongo
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=qwer1234
+      - ME_CONFIG_BASICAUTH_USERNAME=tomato
+      - ME_CONFIG_BASICAUTH_PASSWORD=qwer1234
+    depends_on:
+      - mongodb
+
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    command: -H unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock #Docker 소켓을 공유하여 Docker 관린
+      - ./portainer_data:/data # Portainer 데이터를 영구 저장 
+    deploy:
+      mode: replicated 
+      replicas: 1 
+      placement:
+        constraints:
+          - node.role == manager # Portainer는 Docker Swarm의 Manager노드에서 실행
+    ports:
+      - "9001:9001"
+    networks:
+      - internal
+
+# networks:
+#   internal:
+#     driver: overlay
