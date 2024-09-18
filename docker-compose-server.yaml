@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:  
+  fastapi-server:
+    image: tomatoserver:latest  # Python 3.11 기반 이미지를 사용
+    # container_name: tomatoserver
+    volumes: 
+      - ./vectorStore:/vectorStore
+      - ./:/main  # 현재 디렉토리를 컨테이너의 /main으로 마운트
+    working_dir: /main  # 작업 디렉토리 설정
+    command: /bin/bash -c "apt-get update && apt-get install -y --no-install-recommends default-jre default-jdk && pip install -r requirements.txt && uvicorn --host 0.0.0.0 api.api:app --port=1542"
+    tty: true
+    command: uvicorn --host 0.0.0.0 api.api:app --port=1412
+    ports:
+      - 1412:1412
+    networks:
+      - cloud-public
+    depends_on:
+      - traefik
+    deploy:
+      replicas: 3
+      labels:
+        # traefik.enable=true and constraint label are needed because
+        # of the restrictions we enforced in our traefik configuration
+        - traefik.enable=true
+        - traefik.constraint-label=cloud-public
+        - traefik.http.routers.fastapi-server.entrypoints=websecure
+        - traefik.http.routers.fastapi-server.rule=Host(`fastapi.localhost`)
+        - traefik.http.routers.fastapi-server.tls=true
+        # min TLS version
+        - traefik.http.routers.fastapi-server.tls.options=tls12@file
+        - traefik.http.routers.fastapi-server.tls.certresolver=letsencrypt
+        - traefik.http.routers.fastapi-server.middlewares=traefik-ratelimit
+        - traefik.http.services.fastapi-server.loadbalancer.server.port=1412
+    environment:
+      - DB_HOST=mongodb              # MongoDB 컨테이너 이름
+      - DB_PORT=27017   
+
+
+
+networks:
+  cloud-public:
+    external: true

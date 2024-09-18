@@ -1,0 +1,139 @@
+version: '3.8'
+
+# Let's Encrypt의 인증서를 저장하는 volume
+volumes:
+  traefik-certificates:
+
+networks:
+  cloud-edge:
+    external: true
+  cloud-public:
+    external: true
+  cloud-socket-proxy:
+    external: true
+
+services:
+  reverse-proxy:
+    image: traefik:v2.2
+    command:
+      - --providers.docker
+      # Use the secure docker socket proxy
+      - --providers.docker.endpoint=tcp://socket-proxy:2375
+      # Add a constraint to only use services with the label "traefik.constraint-label=cloud-public"
+      - --providers.docker.constraints=Label(`traefik.constraint-label`, `cloud-public`)
+      # Don't expose containers per default
+      - --providers.docker.exposedByDefault=false
+      - --providers.docker.swarmMode=true
+      # fileprovider needed for TLS configuration
+      # see https://github.com/containous/traefik/issues/5507
+      - --providers.file.filename=traefik_conf/dynamic_conf.toml
+      # Entrypoints (ports) for the routers
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # Entrypoint for the dashboard on port 8000
+      - --entrypoints.api.address=:8000
+      # Create the certificate resolver "letsencrypt" for Let's Encrypt, uses the environment variable EMAIL
+      - --certificatesresolvers.letsencrypt.acme.email=jwsjws99@gmail.com
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      # Let's encrypt 인증 제한을 피하기 위해서 개발 도중에 사용되는 caServer
+      # - --certificatesresolvers.letsencrypt.acme.caServer=https://acme-staging-v02.api.letsencrypt.org/directory
+
+      # Logging
+      - --accesslog
+      - --log.level=debug
+
+      # Enable the dashboard
+      - --api
+    deploy:
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints:
+          - node.labels.cloud-public.traefik-certificates == true
+          - node.role == manager
+      labels:
+        # traefik.enable is required because we don't expose all containers automatically
+        - traefik.enable=true
+        - traefik.docker.network=cloud-public
+        - traefik.constraint-label=cloud-public
+
+        # Global redirection: HTTP to HTTPS
+        - traefik.http.routers.http-redirects.entrypoints=web
+        - traefik.http.routers.http-redirects.rule=hostregexp(`{host:(www\.)?.+}`)
+        - traefik.http.routers.http-redirects.middlewares=traefik-ratelimit,redirect-to-non-www-https
+
+        # Global redirection: HTTPS www to HTTPS non-www
+        - traefik.http.routers.www-redirects.entrypoints=websecure
+        - traefik.http.routers.www-redirects.rule=hostregexp(`{host:(www\.).+}`)
+        - traefik.http.routers.www-redirects.tls=true
+        - traefik.http.routers.www-redirects.tls.options=default
+        - traefik.http.routers.www-redirects.middlewares=traefik-ratelimit,redirect-to-non-www-https
+
+        # Middleware to redirect to bare https
+        - traefik.http.middlewares.redirect-to-non-www-https.redirectregex.regex=^https?://(?:www\.)?(.+)
+        - traefik.http.middlewares.redirect-to-non-www-https.redirectregex.replacement=https://$${1}
+        - traefik.http.middlewares.redirect-to-non-www-https.redirectregex.permanent=true
+
+        # Dashboard on port 8000
+        - traefik.http.routers.api.entrypoints=api
+        - traefik.http.routers.api.rule=Host(`fastapi.localhost`)
+        - traefik.http.routers.api.service=api@internal
+        - traefik.http.routers.api.tls=true
+        - traefik.http.routers.api.tls.options=default
+        - traefik.http.routers.api.tls.certresolver=letsencrypt
+
+        # middlewares:
+        # IP whitelist, ratelimit and basic authentication
+        - traefik.http.routers.api.middlewares=api-ipwhitelist,traefik-ratelimit,api-auth
+        - traefik.http.middlewares.api-auth.basicauth.users=admin:test
+        # 접속 가능한 white list IP 지정
+        - traefik.http.middlewares.api-ipwhitelist.ipwhitelist.sourcerange=127.0.0.1/32
+        - traefik.http.services.api.loadbalancer.server.port=8000
+
+        # Extra middleware (ratelimit, ip whitelisting)
+        - traefik.http.middlewares.traefik-ratelimit.ratelimit.average=100
+        - traefik.http.middlewares.traefik-ratelimit.ratelimit.burst=50
+    # use host mode for network ports for ip whitelisting
+    # see https://community.containo.us/t/whitelist-swarm-cant-get-real-source-ip/3897
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+      - target: 8000
+        published: 8000
+        protocol: tcp
+        mode: host
+    volumes:
+      # storage for the SSL certificates
+      - ./letsencrypt:/letsencrypt
+      # bind mount the directory for your traefik configuration
+      - ./traefik_conf:/traefik_conf
+    networks:
+      - cloud-edge
+      - cloud-public
+      - cloud-socket-proxy
+
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    deploy:
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints: [node.role == manager]
+    environment:
+      # permssions needed
+      NETWORKS: 1
+      SERVICES: 1
+      TASKS: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      cloud-socket-proxy:
+        aliases:
+          - socket-proxy
